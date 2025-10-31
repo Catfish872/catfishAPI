@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  catfish-api:
+    # 使用当前目录下的 Dockerfile 来构建镜像
+    build: .
+    # 给镜像起个名字
+    image: catfish-api:latest
+    # 从 .env 文件加载环境变量到容器中
+    env_file:
+      - .env
+    # 将容器的8000端口映射到你主机的8000端口
+    # 这样你就可以通过 http://localhost:8000 访问服务
+    ports:
+      - "8000:8000"
+    # 设置容器的名称
+    container_name: catfish-api-container

@@ -1,0 +1,8 @@
+fastapi
+uvicorn[standard]
+python-dotenv
+gemini_webapi
+tenacity  
+cachetools 
+aiohttp
+python-multipart 
