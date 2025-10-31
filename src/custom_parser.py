@@ -1,89 +1,70 @@
+# --- custom_parser.py (生图解析专家版) ---
+
 import json
+from gemini_webapi import GeneratedImage
 
 
-# ==============================================================================
-# ======================== START: 替代类定义 =================================
-# 我们自己定义这些类，以避免任何导入问题。
-# 它们只需要结构和属性名与原始类相同即可。
-# ==============================================================================
-
-class _FallbackGeneratedImage:
-    """一个替代 gemini_webapi.GeneratedImage 的类"""
-
-    def __init__(self, url: str):
-        self.url = url
-        self.title = ""  # 保持属性完整
-        self.alt = ""  # 保持属性完整
-
-
-class _FallbackCandidate:
-    """一个替代 gemini_webapi.GeminiCandidate 的类"""
-
-    def __init__(self, text: str, image_urls: list[str]):
-        self.text = text
-        self.generated_images = [_FallbackGeneratedImage(url=u) for u in image_urls]
-
-        # 保持其他属性的结构完整性
-        self.web_images = []
-        self.code = {}
-
-    @property
-    def images(self):
-        """为了兼容 main.py 中对 .images 的调用"""
-        return self.generated_images + self.web_images
-
-
-# ==============================================================================
-# ========================= END: 替代类定义 ==================================
-# ==============================================================================
-
-
-def parse_error_response_for_images(raw_text: str):
+def find_generated_images_from_raw_text(raw_text: str, cookies: dict, proxy: str | None) -> list[GeneratedImage]:
     """
-    一个后备解析器，它不关心错误类型，只尝试从原始响应文本中
-    强行解析出文本和图片，并返回我们自己定义的替代对象。
+    一个专门的解析器，只负责从原始响应文本中提取生成的图片。
     """
+    generated_images = []
     try:
-        clean_text = raw_text
-        if clean_text.startswith(")]}'"):
-            clean_text = clean_text.split('\n', 1)[-1]
+        keyword = ")]}'"
+        start_index = raw_text.find(keyword)
+        if start_index == -1: return []
 
+        json_blob = raw_text[start_index:]
+        clean_text = json_blob[4:].strip() if json_blob.startswith(keyword) else json_blob
         data = json.loads(clean_text)
 
-        inner_json_str = None
+        # 遍历所有数据块，寻找包含 "https://lh3.googleusercontent.com/gg/" 的部分
+        # 这是 Google 生成图片的典型 URL 特征
         for item in data:
-            if isinstance(item, list) and len(item) > 2 and isinstance(item[2], str) and "rc_" in item[2]:
-                inner_json_str = item[2]
-                break
+            if isinstance(item, list) and len(item) > 2 and isinstance(item[2], str):
+                if "https://lh3.googleusercontent.com/gg/" in item[2]:
+                    # 找到了一个可能包含图片数据块
+                    inner_data_str = item[2]
+                    inner_data = json.loads(inner_data_str)
 
-        if not inner_json_str:
-            return None
+                    # 在这个数据块内部递归查找图片URL
+                    urls = _recursive_find_urls(inner_data)
+                    for url in urls:
+                        generated_images.append(
+                            GeneratedImage(
+                                url=url,
+                                title="[Generated Image (Recovered)]",
+                                alt="",
+                                proxy=proxy,
+                                cookies=cookies
+                            )
+                        )
 
-        inner_data = json.loads(inner_json_str)
+        # 去重
+        unique_images = []
+        seen_urls = set()
+        for img in generated_images:
+            if img.url not in seen_urls:
+                unique_images.append(img)
+                seen_urls.add(img.url)
 
-        final_text = ""
-        image_urls = []
+        if unique_images:
+            print(f"[DEBUG] Custom parser successfully recovered {len(unique_images)} generated image(s).")
+        return unique_images
 
-        if isinstance(inner_data, list) and len(inner_data) > 0 and \
-                isinstance(inner_data[0], list) and len(inner_data[0]) > 1 and \
-                isinstance(inner_data[0][1], list) and len(inner_data[0][1]) > 0:
-            final_text = inner_data[0][1][0] or ""
+    except (json.JSONDecodeError, IndexError, TypeError):
+        return []
 
-        if isinstance(inner_data, list) and len(inner_data) > 0 and \
-                isinstance(inner_data[0], list) and len(inner_data[0]) > 4 and \
-                isinstance(inner_data[0][4], list) and len(inner_data[0][4]) > 0 and \
-                isinstance(inner_data[0][4][0], list):
-            images_block = inner_data[0][4][0]
-            for img_data in images_block:
-                if isinstance(img_data, list) and len(img_data) > 3 and \
-                        isinstance(img_data[3], str) and img_data[3].startswith("https://"):
-                    image_urls.append(img_data[3])
 
-        if final_text or image_urls:
-            # 返回我们自己定义的替代类的实例
-            return _FallbackCandidate(text=final_text, image_urls=image_urls)
-
-    except (json.JSONDecodeError, IndexError, TypeError, KeyError):
-        return None
-
-    return None
+def _recursive_find_urls(data) -> list[str]:
+    """递归辅助函数，用于在未知结构中查找所有图片URL"""
+    urls = []
+    if isinstance(data, dict):
+        for key, value in data.items():
+            urls.extend(_recursive_find_urls(value))
+    elif isinstance(data, list):
+        for item in data:
+            urls.extend(_recursive_find_urls(item))
+    elif isinstance(data, str) and data.startswith("https://lh3.googleusercontent.com/gg/"):
+        urls.append(data)
+    return urls
