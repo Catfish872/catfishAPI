@@ -2,7 +2,10 @@ fastapi
 uvicorn[standard]
 python-dotenv
 gemini_webapi
-tenacity  
-cachetools 
+tenacity
+cachetools
+requests
 aiohttp
-python-multipart 
+python-multipart
+httpx
+aiofiles
