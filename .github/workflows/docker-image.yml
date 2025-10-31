@@ -21,13 +21,18 @@ jobs:
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Convert repository name to lowercase
+        id: repo_name # 给这个步骤一个ID，方便引用它的输出
+        run: echo "lowercase_repo=$(echo ${{ github.repository }} | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
+
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
           context: .
           push: ${{ github.ref == 'refs/heads/main' }}
+          # 使用上一步生成的小写变量来构建标签
           tags: |
-            ghcr.io/${{ github.repository }}:latest
-            ghcr.io/${{ github.repository }}:${{ github.sha }}
+            ghcr.io/${{ steps.repo_name.outputs.lowercase_repo }}:latest
+            ghcr.io/${{ steps.repo_name.outputs.lowercase_repo }}:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
