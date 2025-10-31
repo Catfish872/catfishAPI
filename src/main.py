@@ -1,31 +1,28 @@
 import uuid
 import time
 import json
-import re
-import ast
 import base64
 import aiohttp
 import aiofiles
 import os
 from contextlib import asynccontextmanager
-import httpx  # <--- 新增: 用于带认证下载图片
+import httpx
 
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.responses import StreamingResponse
 from cachetools import TTLCache
 
-from .config import API_KEY, PROXY_URL  # <--- 导入 PROXY_URL
+from .config import API_KEY, PROXY_URL
 from .gemini_client import gemini_manager
 from .conversation import Conversation
 from .models import (
     ChatCompletionRequest, ChatCompletionResponse, ChatCompletionMessage,
     ChatCompletionChoice, ModelList, ModelCard, TextContentBlock,
-    ImageContentBlock, GeneratedImage, Content, ImageUrl
+    ImageContentBlock, Content, ImageUrl
 )
-from gemini_webapi import GeneratedImage as GeminiGeneratedImage
 
-# ... (ACTIVE_SESSIONS, lifespan, app, auth_scheme, verify_key, fake_stream_response_generator, process_multimodal_content 保持不变)
+# ... (其他函数保持不变) ...
 ACTIVE_SESSIONS: TTLCache[str, Conversation] = TTLCache(maxsize=1024, ttl=3600)
 
 
@@ -37,7 +34,7 @@ async def lifespan(app: FastAPI):
     await gemini_manager.close()
 
 
-app = FastAPI(lifespan=lifespan, title="Catfish API", version="1.2.2 Final")  # Final Version Bump!
+app = FastAPI(lifespan=lifespan, title="Catfish API", version="1.2.2 Final")
 auth_scheme = HTTPBearer()
 
 
@@ -64,7 +61,6 @@ async def fake_stream_response_generator(response_content: str, model: str, sess
 
 
 async def process_multimodal_content(messages: list) -> tuple[str, list[str]]:
-    # ... (此函数保持不变)
     user_prompt_parts = []
     temp_file_paths = []
     last_user_message = next((msg for msg in reversed(messages) if msg.role == 'user'), None)
@@ -105,13 +101,12 @@ def read_root():
 
 @app.get("/v1/models", response_model=ModelList, dependencies=[Depends(verify_key)])
 async def list_models():
-    # ... (此函数保持不变)
     try:
         model_ids = await gemini_manager.client.get_models()
         if model_ids: return ModelList(data=[ModelCard(id=model_id) for model_id in model_ids])
     except Exception as e:
         print(f"Error dynamically fetching models: {e}")
-    fallback_models = ["gemini-2.5-pro", "gemini-2.5-flash"]
+    fallback_models = ["gemini-1.5-pro", "gemini-1.5-flash"]
     return ModelList(data=[ModelCard(id=model_id) for model_id in fallback_models])
 
 
@@ -139,44 +134,61 @@ async def chat_completions(request: ChatCompletionRequest):
             files=temp_files
         )
 
+        # ========================= DEBUG START =========================
+        print("\n[DEBUG] -------------------- Main.py --------------------")
+        print(f"[DEBUG] Received response object in main.py. Type: {type(response_object)}")
+        print(f"[DEBUG] Checking for images... Has 'images' attr: {hasattr(response_object, 'images')}")
+        if hasattr(response_object, 'images'):
+            print(f"[DEBUG]   - Number of images: {len(response_object.images)}")
+        # ========================= DEBUG END =========================
+
         response_content_parts: list = []
         if response_object.text:
             response_content_parts.append(TextContentBlock(type="text", text=response_object.text))
 
-        # vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
-        #               核心修改：图片代理逻辑
-        # vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
-        if response_object.images:
+        if hasattr(response_object, 'images') and response_object.images:
             async with httpx.AsyncClient(
                     proxy=PROXY_URL,
                     cookies=gemini_manager.client.cookies,
                     timeout=30.0,
                     follow_redirects=True
             ) as client:
-                for img in response_object.images:
-                    if isinstance(img, GeminiGeneratedImage):
+                for i, img in enumerate(response_object.images):
+                    if hasattr(img, 'url') and img.url:
+                        # ========================= DEBUG START =========================
+                        print(f"[DEBUG] ---> Processing image {i + 1}/{len(response_object.images)}")
+                        print(f"[DEBUG]      - URL: {img.url}")
+                        # ========================= DEBUG END =========================
                         try:
-                            print(f"Downloading generated image from: {img.url}")
                             image_response = await client.get(img.url)
+
+                            # ========================= DEBUG START: THIS IS THE MOST IMPORTANT PART =========================
+                            print(f"[DEBUG]      - HTTPX Response Status Code: {image_response.status_code}")
+                            print(f"[DEBUG]      - HTTPX Response Headers: {image_response.headers}")
+                            print(f"[DEBUG]      - HTTPX Response Content Length: {len(image_response.content)} bytes")
+
+                            # 如果下载失败，打印出返回的文本内容，这通常是错误信息
+                            if image_response.status_code != 200:
+                                print(
+                                    f"[DEBUG]      - !!! DOWNLOAD FAILED !!! Response Body Preview: {image_response.text[:500]}")
+                            # ========================= DEBUG END =========================
+
                             image_response.raise_for_status()
                             image_data = image_response.content
-
                             content_type = image_response.headers.get("content-type", "image/png")
                             base64_encoded_image = base64.b64encode(image_data).decode("utf-8")
-
                             data_uri = f"data:{content_type};base64,{base64_encoded_image}"
-
-                            image_block = ImageContentBlock(
-                                type="image_url",
-                                image_url=ImageUrl(url=data_uri)
-                            )
+                            image_block = ImageContentBlock(type="image_url", image_url=ImageUrl(url=data_uri))
                             response_content_parts.append(image_block)
 
                         except Exception as e:
-                            print(f"Failed to download or encode image: {e}")
-                            error_text = f"\n[Error: Failed to load image from {img.url}]"
+                            print(f"[DEBUG]      - !!! EXCEPTION during download/encode for {img.url}: {e}")
+                            error_text = f"\n[Error: Backend failed to proxy image from {img.url}]"
                             response_content_parts.append(TextContentBlock(type="text", text=error_text))
-        # ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+        # ========================= DEBUG START =========================
+        print("[DEBUG] -----------------------------------------------------\n")
+        # ========================= DEBUG END =========================
 
         final_content: Content
         if len(response_content_parts) == 1 and response_content_parts[0].type == "text":
@@ -204,7 +216,6 @@ async def chat_completions(request: ChatCompletionRequest):
             stream_content = "\n".join(texts + images)
         else:
             stream_content = final_content or ""
-
         return StreamingResponse(fake_stream_response_generator(stream_content, request.model, session_id),
                                  media_type="text/event-stream")
     else:
