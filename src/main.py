@@ -21,7 +21,7 @@ from .conversation import Conversation
 from .models import (
     ChatCompletionRequest, ChatCompletionResponse, ChatCompletionMessage,
     ChatCompletionChoice, ModelList, ModelCard, TextContentBlock,
-    ImageContentBlock, GeneratedImage
+    ImageContentBlock, GeneratedImage, Content, ImageUrl
 )
 from gemini_webapi import GeneratedImage as GeminiGeneratedImage
 
@@ -111,7 +111,7 @@ async def list_models():
         if model_ids: return ModelList(data=[ModelCard(id=model_id) for model_id in model_ids])
     except Exception as e:
         print(f"Error dynamically fetching models: {e}")
-    fallback_models = ["gemini-1.5-pro", "gemini-1.5-flash"]
+    fallback_models = ["gemini-2.5-pro", "gemini-2.5-flash"]
     return ModelList(data=[ModelCard(id=model_id) for model_id in fallback_models])
 
 
@@ -138,14 +138,15 @@ async def chat_completions(request: ChatCompletionRequest):
             model=request.model,
             files=temp_files
         )
-        ai_response_content = response_object.text or ""
+
+        response_content_parts: list = []
+        if response_object.text:
+            response_content_parts.append(TextContentBlock(type="text", text=response_object.text))
 
         # vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
         #               核心修改：图片代理逻辑
         # vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
         if response_object.images:
-            image_md_parts = ["\n\n**Generated Images:**"]
-            # 创建一个带认证和代理的异步HTTP客户端来下载图片
             async with httpx.AsyncClient(
                     proxy=PROXY_URL,
                     cookies=gemini_manager.client.cookies,
@@ -156,28 +157,34 @@ async def chat_completions(request: ChatCompletionRequest):
                     if isinstance(img, GeminiGeneratedImage):
                         try:
                             print(f"Downloading generated image from: {img.url}")
-                            # 使用后端客户端下载图片数据
                             image_response = await client.get(img.url)
                             image_response.raise_for_status()
                             image_data = image_response.content
 
-                            # 将图片数据编码为 Base64
                             content_type = image_response.headers.get("content-type", "image/png")
                             base64_encoded_image = base64.b64encode(image_data).decode("utf-8")
 
-                            # 创建一个可以直接在<img>标签中使用的 Data URI
                             data_uri = f"data:{content_type};base64,{base64_encoded_image}"
 
-                            # 将 Data URI 放入 Markdown
-                            image_md_parts.append(f"![Generated Image]({data_uri})")
+                            image_block = ImageContentBlock(
+                                type="image_url",
+                                image_url=ImageUrl(url=data_uri)
+                            )
+                            response_content_parts.append(image_block)
 
                         except Exception as e:
                             print(f"Failed to download or encode image: {e}")
-                            # 如果下载失败，返回原始URL作为备用
-                            image_md_parts.append(f"![Failed to load image]({img.url})")
-
-            ai_response_content += "\n".join(image_md_parts)
+                            error_text = f"\n[Error: Failed to load image from {img.url}]"
+                            response_content_parts.append(TextContentBlock(type="text", text=error_text))
         # ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+        final_content: Content
+        if len(response_content_parts) == 1 and response_content_parts[0].type == "text":
+            final_content = response_content_parts[0].text
+        elif not response_content_parts:
+            final_content = ""
+        else:
+            final_content = response_content_parts
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -189,12 +196,21 @@ async def chat_completions(request: ChatCompletionRequest):
                 print(f"Error cleaning up temp file {f}: {e}")
 
     if request.stream:
-        return StreamingResponse(fake_stream_response_generator(ai_response_content, request.model, session_id),
+        stream_content: str
+        if isinstance(final_content, list):
+            texts = [part.text for part in final_content if hasattr(part, 'text')]
+            images = [f"![Generated Image]({part.image_url.url})" for part in final_content if
+                      hasattr(part, 'image_url')]
+            stream_content = "\n".join(texts + images)
+        else:
+            stream_content = final_content or ""
+
+        return StreamingResponse(fake_stream_response_generator(stream_content, request.model, session_id),
                                  media_type="text/event-stream")
     else:
         response_id = f"chatcmpl-{uuid.uuid4()}"
         created_timestamp = int(time.time())
-        response_message = ChatCompletionMessage(role="assistant", content=ai_response_content)
+        response_message = ChatCompletionMessage(role="assistant", content=final_content)
         choice = ChatCompletionChoice(message=response_message)
         return ChatCompletionResponse(id=response_id, created=created_timestamp, model=request.model, choices=[choice],
                                       session_id=session_id)
