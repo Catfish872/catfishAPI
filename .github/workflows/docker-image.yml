@@ -7,6 +7,12 @@ on:
 jobs:
   build_and_push:
     runs-on: ubuntu-latest
+    
+    # 授权工作流向 GitHub Packages 写入的权限
+    permissions:
+      contents: read  # 读取仓库内容的权限 (用于 checkout)
+      packages: write # 写入包的权限 (用于推送 Docker 镜像)
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -21,8 +27,9 @@ jobs:
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # 新增步骤：将仓库名（Owner/RepoName）转换为全小写，并输出给后续步骤使用
       - name: Convert repository name to lowercase
-        id: repo_name # 给这个步骤一个ID，方便引用它的输出
+        id: repo_name
         run: echo "lowercase_repo=$(echo ${{ github.repository }} | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
 
       - name: Build and push Docker image
