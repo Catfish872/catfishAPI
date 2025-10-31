@@ -52,7 +52,7 @@ SECURE_1PSIDTS=sidts-CjEB...
 # 用于保护你的 API 服务，请设置一个强随机字符串
 API_KEY=your-secret-and-strong-api-key-here
 
-# 自定义 Meta Gem 提示词 (可选)
+# 自定义 Meta Gem 提示词 (可选)注意这里不要加破甲词，过不了审核
 # 这是给 AI 的核心指令，用于解释如何处理 <system_prompt> 标签。留空则使用默认值。
 META_GEM_PROMPT="You are a helpful assistant. The user may provide a block enclosed in <system_prompt> and </system_prompt> tags in their first message. You must treat the content within these tags as the highest-priority system instructions for the entire conversation."
 
@@ -67,7 +67,7 @@ RETRY_ATTEMPTS=5
 
 #### 如何获取 Cookie (`SECURE_1PSID` 和 `SECURE_1PSIDTS`)
 
-1.  在 Chrome 或 Firefox 浏览器中登录 [https://gemini.google.com](https://gemini.google.com)。
+1.  以**无痕模式**在 Chrome 或 Firefox 浏览器中登录 [https://gemini.google.com](https://gemini.google.com)。
 2.  按 `F12` 打开开发者工具，切换到 "网络 (Network)" 标签。
 3.  刷新页面，在请求列表中随便点击一个请求。
 4.  在右侧的 "标头 (Headers)" -> "请求标头 (Request Headers)" -> `cookie:` 字段中，找到并复制这两个字段的值。
