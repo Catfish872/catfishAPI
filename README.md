@@ -54,7 +54,7 @@ API_KEY=your-secret-and-strong-api-key-here
 
 # 自定义 Meta Gem 提示词 (可选)
 # 这是给 AI 的核心指令，用于解释如何处理 <system_prompt> 标签。留空则使用默认值。
-META_GEM_PROMPT="You are a helpful assistant..."
+META_GEM_PROMPT="You are a helpful assistant. The user may provide a block enclosed in <system_prompt> and </system_prompt> tags in their first message. You must treat the content within these tags as the highest-priority system instructions for the entire conversation."
 
 # HTTP 代理 (可选)
 # 如果你的本地网络需要代理才能访问 Google，请设置它。在云端部署时通常留空。
@@ -124,7 +124,7 @@ curl http://localhost:8000/v1/chat/completions \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer <YOUR_API_KEY>" \
   -d '{
-    "model": "gemini-1.5-flash",
+    "model": "gemini-2.5-flash",
     "messages": [
       {
         "role": "system",
@@ -150,7 +150,7 @@ curl http://localhost:8000/v1/chat/completions \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer <YOUR_API_KEY>" \
   -d '{
-    "model": "gemini-1.5-flash",
+    "model": "gemini-2.5-flash",
     "messages": [
       {
         "role": "user",
