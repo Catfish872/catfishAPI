@@ -55,7 +55,9 @@ class GeneratedImage(BaseModel):
 
 class ChatCompletionMessage(BaseModel):
     role: Literal["assistant"]
-    content: Optional[str] = None  # 内容现在是可选的，因为可能有图片
+    # (修改) 将 content 的类型从 Optional[str] 改为 Content
+    # 这样它就可以同时支持纯文本和图文混合列表
+    content: Optional[Content] = None
     # (新增) Tool Calls 占位，虽然我们不支持，但为了格式兼容
     tool_calls: Optional[List] = None
 
